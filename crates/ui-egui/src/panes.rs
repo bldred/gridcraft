@@ -228,6 +228,12 @@ fn format_chart(app: &mut SheetApp, ui: &mut Ui) {
                 app.run_or_alert("chart.set", json!({"chart": id, "yTitle": if yt.is_empty() { Json::Null } else { json!(yt) }}));
             }
         });
+        if gridcraft_chart::supports_reversed_categories(chart.kind) {
+            let mut rev = chart.x_reversed;
+            if ui.checkbox(&mut rev, "Categories in reverse order").changed() {
+                app.run_or_alert("chart.set", json!({"chart": id, "xReversed": rev}));
+            }
+        }
     });
     ui.collapsing("Series", |ui| {
         let data = app.session.active().map(|d| gridcraft_chart::resolve(&d.wb, d.wb.active_sheet, &chart));

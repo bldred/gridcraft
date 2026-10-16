@@ -502,6 +502,11 @@ pub struct Chart {
     /// whenever the PivotTable is refreshed or its layout changes.
     #[serde(default)]
     pub pivot: Option<String>,
+    /// Categories in reverse order (Format Axis ▸ Axis Options; XLSX `c:orientation val="maxMin"`
+    /// on the category axis): the first category is drawn at the top of a bar chart, at the
+    /// right of a column, line or area chart.
+    #[serde(default)]
+    pub x_reversed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

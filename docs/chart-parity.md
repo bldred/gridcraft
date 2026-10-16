@@ -1,6 +1,6 @@
 # Chart parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** trivial (chart sheets are kept on save, still not editable (#727); previously minor: trendlines: model, XLSX round-trip, drawing, Add Chart Element) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-16 · **Change:** minor (categories in reverse order: model, XLSX round-trip, drawing, Format pane and `chart.set` (#1687); previously trivial: chart sheets are kept on save, still not editable (#727)) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Excel's chart types and chart elements against GridCraft. Part of
 [target-app-parity.md](target-app-parity.md). **Breadth ~50%, ready ~30%, 40–60 h** (estimated).
@@ -40,7 +40,7 @@ open PRs #158, #161, and issue #190.
 | Legend | position, overlay, formatting, per-entry delete | position only |
 | Data labels | value, category, series, percentage, from cells, callouts, position | one on/off flag |
 | Gridlines | major/minor per axis, formatting | one on/off flag |
-| Axis options | min/max/units, log scale, reverse order, crossing point, display units, date axis, number format | **missing** (auto only) |
+| Axis options | min/max/units, log scale, reverse order, crossing point, display units, date axis, number format | Categories in reverse order on column, bar, line, area and combo charts (Format pane ▸ Elements; `chart.set` `xReversed`; `c:orientation` read and written, #1687). The value axis stays where it is drawn now; the rest **missing** (auto only) |
 | Secondary axis | any series | line series in combo charts |
 | Trendlines | linear, exponential, logarithmic, polynomial, power, moving average, equation and R² | all six types, several per series, name, forward/backward forecast, set intercept, equation and R² label, line colour/width/dash; read, written and drawn on 2-D column, bar, line, area, scatter and bubble series; `chart.addElement` `trendline` adds/removes them. No Format Trendline pane, label position/number format not kept |
 | Error bars | fixed, %, standard deviation/error, custom | **missing** |
@@ -80,6 +80,7 @@ back.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-16 | minor | Categories in reverse order (`Chart.x_reversed`): read and written as `c:orientation val="maxMin"` on the category axis, drawn mirrored on column, bar, line, area and combo charts, Format pane checkbox and `chart.set` `xReversed` (#1687) |
 | 2026-10-12 | trivial | chart sheets are kept on save, still not editable (#727) |
 | 2026-10-11 | minor | Trendlines: all six types modelled, round-tripped through `c:trendline`, drawn with forecast and equation/R² labels; `chart.addElement` `trendline` |
 | 2026-10-11 | minor | PivotCharts (`insert.pivotChart`) |

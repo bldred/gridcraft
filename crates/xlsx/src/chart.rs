@@ -237,6 +237,8 @@ pub fn read_chart(root: &El) -> Option<Chart> {
         source: None,
         by_rows: false,
         pivot: root.path(&["pivotSource", "name"]).map(|n| n.text.trim().to_string()).filter(|n| !n.is_empty()),
+        // Scatter and bubble charts have no category axis: their X axis is a value axis.
+        x_reversed: !scatter && x_ax.and_then(|a| a.path(&["scaling", "orientation"])).and_then(|o| o.attr("val")) == Some("maxMin"),
     })
 }
 
@@ -580,15 +582,18 @@ struct Ax<'a> {
     grid: bool,
     title: Option<&'a str>,
     crosses_max: bool,
+    /// `c:orientation val="maxMin"`: the axis runs from its maximum (categories in reverse order).
+    reverse: bool,
 }
 
 fn axis_xml(a: &Ax<'_>) -> String {
     let mut s = format!(
-        "<c:{0}><c:axId val=\"{1}\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"{2}\"/><c:axPos val=\"{3}\"/>",
+        "<c:{0}><c:axId val=\"{1}\"/><c:scaling><c:orientation val=\"{4}\"/></c:scaling><c:delete val=\"{2}\"/><c:axPos val=\"{3}\"/>",
         if a.cat { "catAx" } else { "valAx" },
         a.id,
         a.delete as u8,
-        a.pos
+        a.pos,
+        if a.reverse { "maxMin" } else { "minMax" }
     );
     if a.grid {
         s.push_str("<c:majorGridlines/>");
@@ -676,6 +681,7 @@ pub fn write_chart(wb: &Workbook, si: usize, ch: &Chart) -> String {
                 grid: false,
                 title: ch.x_title.as_deref(),
                 crosses_max: false,
+                reverse: false,
             }));
             s.push_str(&axis_xml(&Ax {
                 cat: false,
@@ -686,6 +692,7 @@ pub fn write_chart(wb: &Workbook, si: usize, ch: &Chart) -> String {
                 grid: ch.gridlines,
                 title: ch.y_title.as_deref(),
                 crosses_max: false,
+                reverse: false,
             }));
         }
         G::Bar { bar: true, .. } => {
@@ -698,6 +705,7 @@ pub fn write_chart(wb: &Workbook, si: usize, ch: &Chart) -> String {
                 grid: false,
                 title: ch.x_title.as_deref(),
                 crosses_max: false,
+                reverse: ch.x_reversed,
             }));
             s.push_str(&axis_xml(&Ax {
                 cat: false,
@@ -708,6 +716,7 @@ pub fn write_chart(wb: &Workbook, si: usize, ch: &Chart) -> String {
                 grid: ch.gridlines,
                 title: ch.y_title.as_deref(),
                 crosses_max: false,
+                reverse: false,
             }));
         }
         _ => {
@@ -720,6 +729,7 @@ pub fn write_chart(wb: &Workbook, si: usize, ch: &Chart) -> String {
                 grid: false,
                 title: ch.x_title.as_deref(),
                 crosses_max: false,
+                reverse: ch.x_reversed,
             }));
             s.push_str(&axis_xml(&Ax {
                 cat: false,
@@ -730,12 +740,33 @@ pub fn write_chart(wb: &Workbook, si: usize, ch: &Chart) -> String {
                 grid: ch.gridlines,
                 title: ch.y_title.as_deref(),
                 crosses_max: false,
+                reverse: false,
             }));
         }
     }
     if secondary.is_some() {
-        s.push_str(&axis_xml(&Ax { cat: true, id: 3, cross: 4, pos: "b", delete: true, grid: false, title: None, crosses_max: false }));
-        s.push_str(&axis_xml(&Ax { cat: false, id: 4, cross: 3, pos: "r", delete: false, grid: false, title: None, crosses_max: true }));
+        s.push_str(&axis_xml(&Ax {
+            cat: true,
+            id: 3,
+            cross: 4,
+            pos: "b",
+            delete: true,
+            grid: false,
+            title: None,
+            crosses_max: false,
+            reverse: ch.x_reversed,
+        }));
+        s.push_str(&axis_xml(&Ax {
+            cat: false,
+            id: 4,
+            cross: 3,
+            pos: "r",
+            delete: false,
+            grid: false,
+            title: None,
+            crosses_max: true,
+            reverse: false,
+        }));
     }
     s.push_str("</c:plotArea>");
     let pos = match ch.legend {

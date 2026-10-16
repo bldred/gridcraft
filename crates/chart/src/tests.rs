@@ -49,6 +49,7 @@ fn chart(kind: ChartKind) -> Chart {
         source: None,
         by_rows: false,
         pivot: None,
+        x_reversed: false,
     }
 }
 
@@ -1055,5 +1056,101 @@ fn area_charts_draw_source_value_labels_only_when_enabled() {
         let last_poly = on.iter().rposition(|p| matches!(p, Prim::Polygon { .. }));
         let first_label = on.iter().position(|p| matches!(p, Prim::Text { text, .. } if text == "$12,000"));
         assert!(first_label > last_poly, "{kind:?}: label drawn under a later area");
+    }
+}
+
+/// Bars of `color` in drawing order, as (x, y, w, h); the small legend swatch is left out.
+fn rects_of(prims: &[Prim], color: Rgba) -> Vec<(f32, f32, f32, f32)> {
+    prims
+        .iter()
+        .filter_map(|p| match p {
+            Prim::Rect { x, y, w, h, fill: Some(f), .. } if *f == color && w.max(*h) > 14.0 => Some((*x, *y, *w, *h)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Where each category label is drawn, as (label, x, y).
+fn label_pos<'a>(prims: &'a [Prim], labels: &[&str]) -> Vec<(&'a str, f32, f32)> {
+    prims
+        .iter()
+        .filter_map(|p| match p {
+            Prim::Text { text, x, y, .. } if labels.contains(&text.as_str()) => Some((text.as_str(), *x, *y)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn categories_in_reverse_order_mirror_bars_and_labels() {
+    let cats = ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6"];
+    for (kind, horizontal) in [(ChartKind::BarClustered, true), (ChartKind::BarStacked, true), (ChartKind::ColumnClustered, false)] {
+        let mut c = chart(kind);
+        c.data_labels = false;
+        let d = sample(kind);
+        let normal = render(&c, &d, 640.0, 400.0, &ApproxMeasure);
+        c.x_reversed = true;
+        let reversed = render(&c, &d, 640.0, 400.0, &ApproxMeasure);
+        for s in &d.series {
+            let (a, b) = (rects_of(&normal, s.color), rects_of(&reversed, s.color));
+            assert_eq!(a.len(), cats.len(), "{kind:?}");
+            assert_eq!(a.len(), b.len(), "{kind:?}");
+            // Every bar is mirrored along the category axis (so the sum of a bar's near edge and
+            // its mirror's far edge is the same for all bars) and keeps its value-axis extent.
+            let sums: Vec<f32> = a
+                .iter()
+                .zip(&b)
+                .map(|(r, m)| {
+                    if horizontal {
+                        assert!((r.0 - m.0).abs() < 0.01 && (r.2 - m.2).abs() < 0.01, "{kind:?} {r:?} {m:?}");
+                        r.1 + m.1 + m.3
+                    } else {
+                        assert!((r.1 - m.1).abs() < 0.01 && (r.3 - m.3).abs() < 0.01, "{kind:?} {r:?} {m:?}");
+                        r.0 + m.0 + m.2
+                    }
+                })
+                .collect();
+            assert!(sums.windows(2).all(|w| (w[0] - w[1]).abs() < 0.01), "{kind:?} {sums:?}");
+        }
+        // The first category moves to the top (bar) or the right (column).
+        let (n, r) = (label_pos(&normal, &cats), label_pos(&reversed, &cats));
+        let at = |l: &[(&str, f32, f32)], t: &str| l.iter().find(|(x, ..)| *x == t).map(|(_, x, y)| if horizontal { *y } else { *x });
+        let (n1, n6, r1, r6) = (at(&n, "Q1"), at(&n, "Q6"), at(&r, "Q1"), at(&r, "Q6"));
+        if horizontal {
+            assert!(n1 > n6 && r1 < r6, "{kind:?} {n:?} {r:?}");
+        } else {
+            assert!(n1 < n6 && r1 > r6, "{kind:?} {n:?} {r:?}");
+        }
+    }
+}
+
+#[test]
+fn categories_in_reverse_order_flip_line_points() {
+    let mut c = chart(ChartKind::Line);
+    c.data_labels = true;
+    let d = sample(ChartKind::Line);
+    let first_label_x = |prims: &[Prim]| {
+        // Data labels sit above each point: the first series' first value.
+        let v = crate::axis::Fmt::new(&d.series[0].number_format).format(d.series[0].values[0].unwrap_or_default(), None);
+        prims.iter().find_map(|p| match p {
+            Prim::Text { text, x, .. } if *text == v => Some(*x),
+            _ => None,
+        })
+    };
+    let normal = render(&c, &d, 640.0, 400.0, &ApproxMeasure);
+    c.x_reversed = true;
+    let reversed = render(&c, &d, 640.0, 400.0, &ApproxMeasure);
+    let (a, b) = (first_label_x(&normal).unwrap(), first_label_x(&reversed).unwrap());
+    assert!(a < 320.0 && b > 320.0, "{a} {b}");
+}
+
+#[test]
+fn reverse_order_leaves_other_kinds_alone() {
+    for kind in ALL_KINDS.into_iter().filter(|k| !supports_reversed_categories(*k)) {
+        let mut c = chart(kind);
+        let d = sample(kind);
+        let normal = render(&c, &d, 640.0, 400.0, &ApproxMeasure);
+        c.x_reversed = true;
+        assert_eq!(render(&c, &d, 640.0, 400.0, &ApproxMeasure), normal, "{kind:?}");
     }
 }

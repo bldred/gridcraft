@@ -407,7 +407,9 @@ impl ValAxis<'_> {
 }
 
 /// Draws gridlines, axis labels and the category axis line; returns the plot rectangle.
-fn frame(ctx: &mut Ctx, area: Bx, cat: CatAxis, y: &ValAxis, y2: Option<&ValAxis>, horizontal: bool, grid: bool) -> Bx {
+/// `reverse` puts category labels in reverse order (the first at the right, or at the top of a
+/// horizontal chart).
+fn frame(ctx: &mut Ctx, area: Bx, cat: CatAxis, y: &ValAxis, y2: Option<&ValAxis>, horizontal: bool, reverse: bool, grid: bool) -> Bx {
     let ls = LABEL_SIZE;
     let lh = ls * 1.4;
     let ylabels = y.labels();
@@ -448,7 +450,8 @@ fn frame(ctx: &mut Ctx, area: Bx, cat: CatAxis, y: &ValAxis, y2: Option<&ValAxis
                 let k = (((lw + 6.0) / cw.max(1e-3)).ceil() as usize).clamp(1, n);
                 for (j, t) in l.iter().enumerate().step_by(k) {
                     let t = ctx.fit(t, ls, cw * k as f32 - 2.0);
-                    ctx.text(plot.x + (j as f32 + 0.5) * cw, plot.bottom() + 3.0, &t, ls, TEXT, HAlign::Center, VAlign::Top);
+                    let slot = if reverse { n.saturating_sub(j + 1) } else { j };
+                    ctx.text(plot.x + (slot as f32 + 0.5) * cw, plot.bottom() + 3.0, &t, ls, TEXT, HAlign::Center, VAlign::Top);
                 }
             }
             CatAxis::Numeric(s, f) => {
@@ -499,7 +502,8 @@ fn frame(ctx: &mut Ctx, area: Bx, cat: CatAxis, y: &ValAxis, y2: Option<&ValAxis
         let k = ((lh / ch.max(1e-3)).ceil() as usize).clamp(1, n);
         for (j, t) in labels.iter().enumerate().step_by(k) {
             let t = ctx.fit(t, ls, lw - 6.0);
-            ctx.text(plot.x - 4.0, plot.bottom() - (j as f32 + 0.5) * ch, &t, ls, TEXT, HAlign::Right, VAlign::Middle);
+            let slot = if reverse { n.saturating_sub(j + 1) } else { j };
+            ctx.text(plot.x - 4.0, plot.bottom() - (slot as f32 + 0.5) * ch, &t, ls, TEXT, HAlign::Right, VAlign::Middle);
         }
         plot
     }
@@ -648,6 +652,13 @@ const TREND_STEPS: usize = 200;
 
 /// Whether series drawn as `k` show trendlines (Excel offers them on 2-D unstacked column,
 /// bar, line, area, scatter and bubble charts).
+/// Whether a chart of this kind is drawn with categories that "Categories in reverse order"
+/// flips (column, bar, line, area and combo charts).
+pub fn supports_reversed_categories(k: ChartKind) -> bool {
+    use ChartKind::*;
+    !matches!(k, Pie | Doughnut | Sunburst | Treemap | Funnel | Radar | Scatter | ScatterLines | Bubble | Histogram | Waterfall | BoxWhisker | Stock)
+}
+
 pub fn supports_trendline(k: ChartKind) -> bool {
     use ChartKind::*;
     matches!(k, ColumnClustered | BarClustered | Line | LineMarkers | Area | Scatter | ScatterLines | Bubble)
@@ -938,7 +949,7 @@ fn cartesian(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx, horizonta
         .fold(0.0, f64::max);
     let ncat_slots = ncat.saturating_add(fwd.ceil() as usize).min(MAX_CATS.max(ncat));
     let labels: Vec<String> = (0..ncat_slots).map(|j| if j < ncat { cat_label(data, j) } else { String::new() }).collect();
-    let plot = frame(ctx, area, CatAxis::Labels(&labels), &y1, y2.as_ref(), horizontal, chart.gridlines);
+    let plot = frame(ctx, area, CatAxis::Labels(&labels), &y1, y2.as_ref(), horizontal, chart.x_reversed, chart.gridlines);
     if !plot.ok() {
         return;
     }
@@ -946,6 +957,13 @@ fn cartesian(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx, horizonta
     let cat_len = if horizontal { plot.h } else { plot.w };
     let cw = cat_len / ncat_slots as f32;
     let center = |j: usize| if horizontal { plot.bottom() - (j as f32 + 0.5) * cw } else { plot.x + (j as f32 + 0.5) * cw };
+    // Categories in reverse order mirror every position along the category axis (bars within a
+    // cluster too), so positions are worked out as usual and then passed through `cat_at`.
+    let cat_at = |p: f32| match (chart.x_reversed, horizontal) {
+        (false, _) => p,
+        (true, true) => plot.y + plot.bottom() - p,
+        (true, false) => plot.x + plot.right() - p,
+    };
     let vpos = |v: f64, sc: &Scale| if horizontal { plot.x + sc.frac(v) * plot.w } else { plot.bottom() - sc.frac(v) * plot.h };
 
     // Column slots: each clustered series gets one, each stack group shares one.
@@ -998,7 +1016,7 @@ fn cartesian(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx, horizonta
                     let mut base = Vec::with_capacity(ncat);
                     for (j, sp) in row.iter().enumerate() {
                         let (b, t) = sp.unwrap_or((0.0, 0.0));
-                        let c = center(j);
+                        let c = cat_at(center(j));
                         top.push([c, vpos(t, &sc)]);
                         base.push([c, vpos(b, &sc)]);
                         // Source values (not stack totals), just above the top edge like the line labels.
@@ -1034,17 +1052,17 @@ fn cartesian(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx, horizonta
                         let len = (pb - pt).abs();
                         if horizontal {
                             let y = c + nslots * bw / 2.0 - (k + 1.0) * bw;
-                            ctx.rect(lo, y, len, bw, s.color, None);
+                            ctx.rect(lo, cat_at(y + bw), len, bw, s.color, None);
                         } else {
                             let x = c - nslots * bw / 2.0 + k * bw;
-                            ctx.rect(x, lo, bw, len, s.color, None);
+                            ctx.rect(cat_at(x + bw), lo, bw, len, s.color, None);
                         }
                         if labels_on && let Some(v) = s.values.get(j).copied().flatten() {
                             let t = fmt.format(v, None);
                             let stacked = fam != Fam::Col;
                             let mid = (pb + pt) / 2.0;
                             if horizontal {
-                                let y = c + nslots * bw / 2.0 - (k + 0.5) * bw;
+                                let y = cat_at(c + nslots * bw / 2.0 - (k + 0.5) * bw);
                                 if stacked {
                                     ctx.text(mid, y, &t, LABEL_SIZE, on(s.color), HAlign::Center, VAlign::Middle);
                                 } else if v >= 0.0 {
@@ -1053,7 +1071,7 @@ fn cartesian(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx, horizonta
                                     ctx.text(lo - 3.0, y, &t, LABEL_SIZE, TEXT, HAlign::Right, VAlign::Middle);
                                 }
                             } else {
-                                let x = c - nslots * bw / 2.0 + (k + 0.5) * bw;
+                                let x = cat_at(c - nslots * bw / 2.0 + (k + 0.5) * bw);
                                 if stacked {
                                     ctx.text(x, mid, &t, LABEL_SIZE, on(s.color), HAlign::Center, VAlign::Middle);
                                 } else if v >= 0.0 {
@@ -1066,7 +1084,8 @@ fn cartesian(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx, horizonta
                     }
                 }
                 _ => {
-                    let pts: Vec<Option<[f32; 2]>> = row.iter().enumerate().map(|(j, sp)| sp.map(|(_, t)| [center(j), vpos(t, &sc)])).collect();
+                    let pts: Vec<Option<[f32; 2]>> =
+                        row.iter().enumerate().map(|(j, sp)| sp.map(|(_, t)| [cat_at(center(j)), vpos(t, &sc)])).collect();
                     draw_runs(ctx, &pts, s.color, 2.25, s.smooth.then_some(plot));
                     let k = kinds.get(i).copied().unwrap_or(ChartKind::Line);
                     if k == ChartKind::LineMarkers && cw >= 3.0 {
@@ -1097,9 +1116,9 @@ fn cartesian(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx, horizonta
         let frac = |x: f64, y: f64| ((x - 0.5) / ncat_slots as f64, (y - sc.min) / (sc.max - sc.min));
         let px = |(fx, fy): (f64, f64)| {
             if horizontal {
-                [plot.x + fy as f32 * plot.w, plot.bottom() - fx as f32 * plot.h]
+                [plot.x + fy as f32 * plot.w, cat_at(plot.bottom() - fx as f32 * plot.h)]
             } else {
-                [plot.x + fx as f32 * plot.w, plot.bottom() - fy as f32 * plot.h]
+                [cat_at(plot.x + fx as f32 * plot.w), plot.bottom() - fy as f32 * plot.h]
             }
         };
         draw_trendlines(ctx, s, &pts, &frac, &px, &mut trend_labels);
@@ -1140,7 +1159,7 @@ fn scatter(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx) {
     let ys = nice_scale(ylo, yhi, false);
     let fx = Fmt::new("General");
     let fy = Fmt::new(data.series.first().map(|s| s.number_format.as_str()).unwrap_or("General"));
-    let plot = frame(ctx, area, CatAxis::Numeric(xs, &fx), &ValAxis { scale: ys, fmt: &fy }, None, false, chart.gridlines);
+    let plot = frame(ctx, area, CatAxis::Numeric(xs, &fx), &ValAxis { scale: ys, fmt: &fy }, None, false, false, chart.gridlines);
     if !plot.ok() {
         return;
     }
@@ -1236,7 +1255,7 @@ fn histogram(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx) {
     let maxc = counts.iter().copied().max().unwrap_or(0) as f64;
     let ys = nice_scale(0.0, maxc, true);
     let fc = Fmt::new("General");
-    let plot = frame(ctx, area, CatAxis::Labels(&labels), &ValAxis { scale: ys, fmt: &fc }, None, false, chart.gridlines);
+    let plot = frame(ctx, area, CatAxis::Labels(&labels), &ValAxis { scale: ys, fmt: &fc }, None, false, false, chart.gridlines);
     if !plot.ok() {
         return;
     }
@@ -1288,7 +1307,7 @@ fn waterfall(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx) {
     let (lo, hi) = value_range(bars.iter().flat_map(|(b, t, _)| [*b, *t])).unwrap_or((0.0, 0.0));
     let ys = nice_scale(lo, hi, true);
     let f = Fmt::new(&s.number_format);
-    let plot = frame(ctx, area, CatAxis::Labels(&labels), &ValAxis { scale: ys, fmt: &f }, None, false, chart.gridlines);
+    let plot = frame(ctx, area, CatAxis::Labels(&labels), &ValAxis { scale: ys, fmt: &f }, None, false, false, chart.gridlines);
     if !plot.ok() {
         return;
     }
@@ -1579,7 +1598,7 @@ fn box_whisker(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx) {
     let Some((lo, hi)) = value_range(data.series.iter().flat_map(|s| s.values.iter().flatten().copied())) else { return };
     let ys = nice_scale(lo, hi, false);
     let f = Fmt::new(data.series.first().map(|s| s.number_format.as_str()).unwrap_or("General"));
-    let plot = frame(ctx, area, CatAxis::Labels(&labels), &ValAxis { scale: ys, fmt: &f }, None, false, chart.gridlines);
+    let plot = frame(ctx, area, CatAxis::Labels(&labels), &ValAxis { scale: ys, fmt: &f }, None, false, false, chart.gridlines);
     if !plot.ok() {
         return;
     }
@@ -1627,7 +1646,7 @@ fn stock(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx) {
     let Some((lo, hi)) = value_range(data.series.iter().flat_map(|s| s.values.iter().flatten().copied())) else { return };
     let ys = nice_scale(lo, hi, false);
     let f = Fmt::new(data.series.first().map(|s| s.number_format.as_str()).unwrap_or("General"));
-    let plot = frame(ctx, area, CatAxis::Labels(&labels), &ValAxis { scale: ys, fmt: &f }, None, false, chart.gridlines);
+    let plot = frame(ctx, area, CatAxis::Labels(&labels), &ValAxis { scale: ys, fmt: &f }, None, false, false, chart.gridlines);
     if !plot.ok() {
         return;
     }
