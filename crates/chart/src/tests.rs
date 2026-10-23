@@ -1229,21 +1229,17 @@ fn value_axis_matches_excels_automatic_bounds() {
         // A stacked bar of start dates plus durations: the stacked positions, 45200…45229.
         (45200.0, 45229.0, (45180.0, 45240.0, 10.0)),
     ] {
-        let s = value_axis_scale(lo, hi);
+        let s = value_axis_scale(lo, hi, 9);
         assert_eq!((s.min, s.max, s.step), want, "{lo}…{hi}");
     }
-    // 95…100: Excel shows 92–101 by 1. The bounds start where Excel's do; GridCraft's steps allow
-    // at most 8 intervals, so it picks 2 and ends at 102 (a separate difference).
-    let s = value_axis_scale(95.0, 100.0);
-    assert_eq!(s.min, 92.0, "{s:?}");
-    assert!(s.max >= 101.0 && s.max <= 102.0, "{s:?}");
-    // All negative mirrors it: Excel −101…−92.
-    let s = value_axis_scale(-100.0, -95.0);
-    assert_eq!(s.max, -92.0, "{s:?}");
-    assert!(s.min <= -101.0 && s.min >= -102.0, "{s:?}");
+    // 95…100 and its mirror, at Excel's default chart size (9 intervals): 92–101 and −101…−92 by 1.
+    let s = value_axis_scale(95.0, 100.0, 9);
+    assert_eq!((s.min, s.max, s.step), (92.0, 101.0, 1.0));
+    let s = value_axis_scale(-100.0, -95.0, 9);
+    assert_eq!((s.min, s.max, s.step), (-101.0, -92.0, 1.0));
     // Hostile and degenerate input still gives a usable scale.
     for (lo, hi) in [(0.0, 0.0), (5.0, 5.0), (-5.0, -5.0), (f64::NAN, 5.0), (-1e308, 1e308), (1e15, 1e15 + 1.0), (0.001, 0.0013), (100.0, 95.0)] {
-        let s = value_axis_scale(lo, hi);
+        let s = value_axis_scale(lo, hi, 9);
         assert!(s.min.is_finite() && s.max.is_finite() && s.step > 0.0 && s.max > s.min, "{lo} {hi} {s:?}");
         assert!((2..=51).contains(&s.ticks().len()), "{lo} {hi} {s:?}");
     }
@@ -1372,5 +1368,114 @@ fn negative_bars_hang_from_the_axis_line() {
         });
         let at = at.unwrap_or_else(|| panic!("{kind:?}: no axis line"));
         assert!((at - starts[0]).abs() < 0.01, "{kind:?}: axis line at {at}, bars start at {}", starts[0]);
+    }
+}
+
+/// The value axis GridCraft draws, read back from its numeric labels: (min, max, step).
+fn drawn_value_axis(p: &[Prim]) -> (f64, f64, f64) {
+    let mut v: Vec<f64> = texts(p).iter().filter_map(|t| t.parse::<f64>().ok()).collect();
+    v.sort_by(f64::total_cmp);
+    v.dedup();
+    let (Some(min), Some(max)) = (v.first().copied(), v.last().copied()) else { return (f64::NAN, f64::NAN, f64::NAN) };
+    let step = v.get(1).map_or(f64::NAN, |s| s - min);
+    (min, max, step)
+}
+
+/// Every automatic axis measured in Excel for Windows (Microsoft 365) on synthetic charts: a
+/// title, a legend at the bottom, no axis titles, as `insert.chart` makes them. Excel's bounds,
+/// read from Format Axis or the axis labels, for each chart size (px at 96 per in).
+#[test]
+fn automatic_value_axes_match_excel_at_every_measured_size() {
+    let col = ChartKind::ColumnClustered;
+    #[rustfmt::skip]
+    let cases: &[(&str, ChartKind, f32, f32, &[&[f64]], (f64, f64, f64))] = &[
+        // Default size, 5 × 3 in: at most 9 intervals.
+        ("s01", col, 480.0, 288.0, &[&[10.0, 25.0, 40.0]], (0.0, 45.0, 5.0)),
+        ("s02", col, 480.0, 288.0, &[&[10.0, 30.0, 47.5]], (0.0, 50.0, 10.0)),
+        ("s03", col, 480.0, 288.0, &[&[10.0, 30.0, 52.0]], (0.0, 60.0, 10.0)),
+        ("s04", col, 480.0, 288.0, &[&[5.0, 12.0, 21.0]], (0.0, 25.0, 5.0)),
+        ("s05", col, 480.0, 288.0, &[&[10.0, 20.0, 33.3]], (0.0, 35.0, 5.0)),
+        ("s06", col, 480.0, 288.0, &[&[0.95, 0.97, 0.99, 1.0]], (0.92, 1.01, 0.01)),
+        ("s07", col, 480.0, 288.0, &[&[1e6, 5e6, 9.5e6]], (0.0, 1e7, 2e6)),
+        ("a1", col, 480.0, 288.0, &[&[95.0, 97.0, 99.0, 100.0]], (92.0, 101.0, 1.0)),
+        ("a2", col, 480.0, 288.0, &[&[50.0, 70.0, 90.0, 100.0]], (0.0, 120.0, 20.0)),
+        ("a3", col, 480.0, 288.0, &[&[84.0, 90.0, 95.0, 100.0]], (75.0, 105.0, 5.0)),
+        ("a4", col, 480.0, 288.0, &[&[83.0, 90.0, 95.0, 100.0]], (0.0, 120.0, 20.0)),
+        ("a7", col, 480.0, 288.0, &[&[-95.0, -97.0, -99.0, -100.0]], (-101.0, -92.0, 1.0)),
+        ("a8", ChartKind::Area, 480.0, 288.0, &[&[95.0, 97.0, 99.0, 100.0]], (92.0, 101.0, 1.0)),
+        ("a9", ChartKind::Line, 480.0, 288.0, &[&[95.0, 97.0, 99.0, 100.0]], (92.0, 101.0, 1.0)),
+        // Bar charts (horizontal value axis) at the default width: at most 9.
+        ("a5", ChartKind::BarClustered, 480.0, 288.0, &[&[95.0, 97.0, 99.0, 100.0]], (92.0, 101.0, 1.0)),
+        ("a6", ChartKind::BarStacked, 480.0, 288.0, &[&[45200.0, 45207.0, 45214.0, 45221.0], &[5.0, 10.0, 3.0, 8.0]], (45180.0, 45240.0, 10.0)),
+        // Small, 2.5 × 1.5 in: 2 intervals.
+        ("s08", col, 240.0, 144.0, &[&[10.0, 25.0, 40.0]], (0.0, 50.0, 50.0)),
+        ("s10", col, 240.0, 144.0, &[&[95.0, 97.0, 99.0, 100.0]], (90.0, 110.0, 10.0)),
+        // Tall, 5 × 6.25 in.
+        ("s09", col, 480.0, 600.0, &[&[10.0, 25.0, 40.0]], (0.0, 45.0, 5.0)),
+        // Height sweep, 5.29 in wide, at the heights Excel reported (1.43 … 6.18 in).
+        ("h1.43 max28", col, 508.0, 137.0, &[&[8.0, 18.0, 28.0]], (0.0, 50.0, 50.0)),
+        ("h1.43 max70", col, 508.0, 137.0, &[&[20.0, 45.0, 70.0]], (0.0, 100.0, 100.0)),
+        ("h1.67 max28", col, 508.0, 160.0, &[&[8.0, 18.0, 28.0]], (0.0, 40.0, 20.0)),
+        ("h1.67 max70", col, 508.0, 160.0, &[&[20.0, 45.0, 70.0]], (0.0, 100.0, 50.0)),
+        ("h1.91 max28", col, 508.0, 183.0, &[&[8.0, 18.0, 28.0]], (0.0, 30.0, 10.0)),
+        ("h1.91 max70", col, 508.0, 183.0, &[&[20.0, 45.0, 70.0]], (0.0, 100.0, 50.0)),
+        ("h2.38 max28", col, 508.0, 228.0, &[&[8.0, 18.0, 28.0]], (0.0, 30.0, 5.0)),
+        ("h2.38 max70", col, 508.0, 228.0, &[&[20.0, 45.0, 70.0]], (0.0, 80.0, 20.0)),
+        ("h2.85 max28", col, 508.0, 274.0, &[&[8.0, 18.0, 28.0]], (0.0, 30.0, 5.0)),
+        ("h2.85 max70", col, 508.0, 274.0, &[&[20.0, 45.0, 70.0]], (0.0, 80.0, 10.0)),
+        ("h3.8 max28", col, 508.0, 365.0, &[&[8.0, 18.0, 28.0]], (0.0, 30.0, 5.0)),
+        ("h3.8 max70", col, 508.0, 365.0, &[&[20.0, 45.0, 70.0]], (0.0, 80.0, 10.0)),
+        ("h4.75 max28", col, 508.0, 456.0, &[&[8.0, 18.0, 28.0]], (0.0, 30.0, 5.0)),
+        ("h4.75 max70", col, 508.0, 456.0, &[&[20.0, 45.0, 70.0]], (0.0, 80.0, 10.0)),
+        ("h6.18 max28", col, 508.0, 593.0, &[&[8.0, 18.0, 28.0]], (0.0, 30.0, 5.0)),
+        ("h6.18 max70", col, 508.0, 593.0, &[&[20.0, 45.0, 70.0]], (0.0, 80.0, 10.0)),
+        // The ceiling, 5.29 × 5.94 in: 10 intervals, never 11.
+        ("c10", col, 508.0, 570.0, &[&[2.0, 5.0, 9.5]], (0.0, 10.0, 1.0)),
+        ("c11", col, 508.0, 570.0, &[&[2.0, 5.0, 10.4]], (0.0, 12.0, 2.0)),
+        ("c12", col, 508.0, 570.0, &[&[2.0, 5.0, 11.4]], (0.0, 12.0, 2.0)),
+        ("c13", col, 508.0, 570.0, &[&[2.0, 5.0, 12.3]], (0.0, 14.0, 2.0)),
+        ("c14", col, 508.0, 570.0, &[&[2.0, 5.0, 13.3]], (0.0, 14.0, 2.0)),
+    ];
+    let mut wrong = Vec::new();
+    for (name, kind, w, h, series, want) in cases {
+        let mut c = chart(*kind);
+        c.data_labels = false;
+        c.x_title = None;
+        c.y_title = None;
+        let n = series.first().map_or(0, |s| s.len());
+        let d = ChartData {
+            categories: (0..n).map(|i| format!("C{}", (b'a' + i as u8) as char)).collect(),
+            series: series
+                .iter()
+                .enumerate()
+                .map(|(i, v)| general(&format!("S{}", (b'a' + i as u8) as char), v, [10, 20, 30 + i as u8, 255], *kind))
+                .collect(),
+            ..ChartData::default()
+        };
+        let got = drawn_value_axis(&render(&c, &d, *w, *h, &ApproxMeasure));
+        let close = |a: f64, b: f64| (a - b).abs() <= 1e-9 * b.abs().max(1.0);
+        if !(close(got.0, want.0) && close(got.1, want.1) && close(got.2, want.2)) {
+            wrong.push(format!("{name}: Excel {want:?}, GridCraft {got:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+#[test]
+fn value_axis_intervals_follow_the_plot_height() {
+    // One more interval per 19.2 px of plot, from 1 up to Excel's ceiling of 10.
+    assert_eq!(value_axis_intervals(0.0, true), 1);
+    assert_eq!(value_axis_intervals(-50.0, true), 1);
+    assert_eq!(value_axis_intervals(29.5 + 19.2 * 2.0 + 0.5, true), 2);
+    assert_eq!(value_axis_intervals(29.5 + 19.2 * 9.0 + 0.5, true), 9);
+    assert_eq!(value_axis_intervals(1e6, true), 10);
+    assert_eq!(value_axis_intervals(f32::NAN, true), 1);
+    assert_eq!(value_axis_intervals(f32::INFINITY, true), 1);
+    // Horizontal axes: Excel's 9 at the default width.
+    assert_eq!(value_axis_intervals(1000.0, false), 9);
+    // A one-interval limit still gives a usable scale.
+    for (lo, hi) in [(8.0, 28.0), (95.0, 100.0), (-100.0, -95.0), (0.0, 1e300)] {
+        let s = value_axis_scale(lo, hi, 1);
+        assert!(s.max > s.min && s.step > 0.0 && (s.max - s.min) / s.step <= 1.0 + 1e-9, "{lo} {hi} {s:?}");
     }
 }

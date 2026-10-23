@@ -5,7 +5,7 @@ use std::f32::consts::{PI, TAU};
 
 use gridcraft_model::{Chart, ChartKind, LegendPos, LineDash, QuartileMethod, Theme, TrendlineKind};
 
-use crate::axis::{Fmt, Scale, clean, fixed_scale, nice_scale, value_axis_scale};
+use crate::axis::{Fmt, Scale, clean, fixed_scale, nice_scale, value_axis_intervals, value_axis_scale};
 use crate::resolve::{MAX_POINTS, MAX_SERIES, MAX_TRENDLINES, series_color};
 use crate::trend::{auto_name, fit_trendline, moving_average};
 use crate::{ChartData, HAlign, Measure, Prim, Rgba, SeriesData, VAlign};
@@ -430,6 +430,14 @@ fn crossing(sc: &Scale) -> f64 {
     }
 }
 
+/// Height of the plot a vertical value axis spans in `frame`, for a drawing area `area_h` tall
+/// with `levels` extra rows of category labels. Shared so the automatic scale can be chosen for
+/// the plot before it is drawn.
+fn value_plot_height(area_h: f32, levels: f32) -> f32 {
+    let lh = LABEL_SIZE * 1.4;
+    area_h - lh * 1.5 - 4.0 - lh * levels
+}
+
 /// Draws gridlines, axis labels and the category axis line; returns the plot rectangle.
 fn frame(ctx: &mut Ctx, area: Bx, cat: CatAxis, y: &ValAxis, y2: Option<&ValAxis>, horizontal: bool, grid: bool) -> Bx {
     let ls = LABEL_SIZE;
@@ -448,7 +456,7 @@ fn frame(ctx: &mut Ctx, area: Bx, cat: CatAxis, y: &ValAxis, y2: Option<&ValAxis
             CatAxis::Labels(_, o) => o.len() as f32,
             CatAxis::Numeric(..) => 0.0,
         };
-        let plot = Bx { x: area.x + left, y: area.y + lh * 0.5, w: area.w - left - right, h: area.h - lh * 1.5 - 4.0 - lh * levels };
+        let plot = Bx { x: area.x + left, y: area.y + lh * 0.5, w: area.w - left - right, h: value_plot_height(area.h, levels) };
         if !plot.ok() {
             return plot;
         }
@@ -975,7 +983,9 @@ fn cartesian(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx, horizonta
         spans.push(row);
     }
 
-    // Axis scales.
+    // Axis scales. A vertical value axis gets as many intervals as its plot has room for, as in
+    // Excel; a bar chart's horizontal one, Excel's 9 at the default width.
+    let max_intervals = value_axis_intervals(value_plot_height(area.h, data.category_levels.len() as f32), !horizontal);
     let mut axes: Vec<(Scale, Fmt)> = Vec::new();
     for axis in [false, true] {
         let members: Vec<usize> = (0..data.series.len()).filter(|i| sec.get(*i).copied().unwrap_or(false) == axis).collect();
@@ -991,7 +1001,7 @@ fn cartesian(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx, horizonta
             (fixed_scale(if lo < -1e-9 { -1.0 } else { 0.0 }, if hi > 1e-9 || lo >= -1e-9 { 1.0 } else { 0.0 }, 0.2), Fmt::new("0%"))
         } else {
             let code = members.first().and_then(|i| data.series.get(*i)).map(|s| s.number_format.as_str()).unwrap_or("General");
-            (value_axis_scale(lo, hi), Fmt::new(code))
+            (value_axis_scale(lo, hi, max_intervals), Fmt::new(code))
         };
         axes.push((scale, fmt));
         if !axis && sec.iter().all(|s| !s) {

@@ -72,7 +72,7 @@ pub fn nice_scale(lo: f64, hi: f64, force_zero: bool) -> Scale {
     if lo < 0.0 {
         lo -= range * 0.05;
     }
-    nice_steps(lo, hi)
+    nice_steps(lo, hi, 8)
 }
 
 /// Excel's automatic value axis for column, bar, line, area and combo charts, as observed in
@@ -82,8 +82,8 @@ pub fn nice_scale(lo: f64, hi: f64, force_zero: bool) -> Scale {
 /// rounded down to a step: 95…100 starts at 92, 84…100 at 75, and a stacked bar of start dates
 /// 45200… plus a few days at 45180. 83…100 starts at 0. All-negative data mirrors this at the
 /// top. `lo`/`hi` are the plotted values (stacked: the stacked positions, not the 0 a stack starts
-/// from). The steps are [`nice_steps`]', which can differ from Excel's (95…100: Excel 92–101 by 1).
-pub fn value_axis_scale(lo: f64, hi: f64) -> Scale {
+/// from). `max_intervals` is how many intervals the axis may have ([`value_axis_intervals`]).
+pub fn value_axis_scale(lo: f64, hi: f64, max_intervals: u32) -> Scale {
     let (mut lo, mut hi) = (clean(lo), clean(hi));
     if lo > hi {
         std::mem::swap(&mut lo, &mut hi);
@@ -115,17 +115,42 @@ pub fn value_axis_scale(lo: f64, hi: f64) -> Scale {
     if lo < 0.0 {
         lo -= room * 0.05;
     }
-    nice_steps(lo, hi)
+    nice_steps(lo, hi, max_intervals)
 }
 
-/// Steps of 1, 2 or 5 × 10ⁿ giving at most 8 intervals over `lo..=hi`, and the bounds rounded
-/// out to them.
-fn nice_steps(lo: f64, hi: f64) -> Scale {
+/// Pixels of plot per axis interval, and the plot a vertical value axis loses before the first
+/// one, fitted to Excel (see [`value_axis_intervals`]).
+const PX_PER_INTERVAL: f32 = 19.2;
+const PX_BEFORE_INTERVALS: f32 = 29.5;
+/// The most intervals Excel gives an automatic value axis, however tall the chart.
+const MAX_INTERVALS: u32 = 10;
+/// A horizontal value axis (bar charts), measured at Excel's default 5 in width only.
+const HORIZONTAL_INTERVALS: u32 = 9;
+
+/// How many intervals an automatic value axis may have, as Excel decides it: from the plot's
+/// height for a vertical axis (one per 0.2 in, 19.2 px, of plot, after 29.5 px, at most 10),
+/// and 9 for a horizontal one. Measured in Excel for Windows (Microsoft 365) on synthetic column
+/// charts from 1.43 to 6.25 in tall: 1 interval at 1.43 in, 2 at 1.5–1.67, 3 at 1.91, 6 at 2.38,
+/// 9 at the default 3 in, 10 from about 4 in up (#2358). `plot_len` is GridCraft's plot
+/// height in pixels; `vertical` is false for a bar chart's horizontal value axis, whose limit
+/// was only measured at the default width.
+pub fn value_axis_intervals(plot_len: f32, vertical: bool) -> u32 {
+    if !vertical {
+        return HORIZONTAL_INTERVALS;
+    }
+    let n = ((plot_len - PX_BEFORE_INTERVALS) / PX_PER_INTERVAL).floor();
+    if n.is_finite() { (n.max(1.0) as u32).min(MAX_INTERVALS) } else { 1 }
+}
+
+/// The smallest step of 1, 2 or 5 × 10ⁿ giving at most `max_intervals` intervals over
+/// `lo..=hi`, and the bounds rounded out to it. Excel uses only these steps (never 2.5 or 4).
+fn nice_steps(lo: f64, hi: f64, max_intervals: u32) -> Scale {
+    let limit = f64::from(max_intervals.max(1));
     let range = hi - lo;
     if !range.is_finite() || range <= 0.0 {
         return Scale { min: 0.0, max: 1.0, step: 0.2 };
     }
-    let e = (range / 8.0).log10().floor();
+    let e = (range / limit).log10().floor();
     let mut chosen = None;
     'outer: for k in [e - 1.0, e, e + 1.0, e + 2.0] {
         let p = 10f64.powf(k);
@@ -135,7 +160,7 @@ fn nice_steps(lo: f64, hi: f64) -> Scale {
                 continue;
             }
             let intervals = (hi / s - 1e-9).ceil() - (lo / s + 1e-9).floor();
-            if intervals <= 8.0 {
+            if intervals <= limit {
                 chosen = Some(s);
                 break 'outer;
             }
