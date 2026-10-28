@@ -1421,6 +1421,9 @@ fn drawn_value_axis(p: &[Prim]) -> (f64, f64, f64) {
     (min, max, step)
 }
 
+/// One measured chart: (name, kind, width px, height px, series values, Excel's (min, max, step)).
+type MeasuredAxis<'a> = (&'a str, ChartKind, f32, f32, &'a [&'a [f64]], (f64, f64, f64));
+
 /// Every automatic axis measured in Excel for Windows (Microsoft 365) on synthetic charts: a
 /// title, a legend at the bottom, no axis titles, as `insert.chart` makes them. Excel's bounds,
 /// read from Format Axis or the axis labels, for each chart size (px at 96 per in).
@@ -1428,7 +1431,7 @@ fn drawn_value_axis(p: &[Prim]) -> (f64, f64, f64) {
 fn automatic_value_axes_match_excel_at_every_measured_size() {
     let col = ChartKind::ColumnClustered;
     #[rustfmt::skip]
-    let cases: &[(&str, ChartKind, f32, f32, &[&[f64]], (f64, f64, f64))] = &[
+    let cases: &[MeasuredAxis] = &[
         // Default size, 5 × 3 in: at most 9 intervals.
         ("s01", col, 480.0, 288.0, &[&[10.0, 25.0, 40.0]], (0.0, 45.0, 5.0)),
         ("s02", col, 480.0, 288.0, &[&[10.0, 30.0, 47.5]], (0.0, 50.0, 10.0)),
