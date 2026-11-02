@@ -5,6 +5,8 @@ use gridcraft_model::{Anchor, Chart, ChartKind, Color, LegendPos, Series, Sparkl
 
 use crate::*;
 
+mod data_table;
+
 const ALL_KINDS: [ChartKind; 26] = [
     ChartKind::ColumnClustered,
     ChartKind::ColumnStacked,
@@ -43,6 +45,7 @@ fn chart(kind: ChartKind) -> Chart {
         series: vec![],
         legend: LegendPos::Bottom,
         data_labels: true,
+        data_table: None,
         gridlines: true,
         style: 0,
         x_title: Some("Quarter".into()),
@@ -1520,5 +1523,23 @@ fn value_axis_intervals_follow_the_plot_height() {
     for (lo, hi) in [(8.0, 28.0), (95.0, 100.0), (-100.0, -95.0), (0.0, 1e300)] {
         let s = value_axis_scale(lo, hi, 1);
         assert!(s.max > s.min && s.step > 0.0 && (s.max - s.min) / s.step <= 1.0 + 1e-9, "{lo} {hi} {s:?}");
+    }
+}
+
+/// A blank cell in a stacked line or area series still gets a stack position (the running total,
+/// 0 with nothing under it); it isn't a plotted value, so it doesn't pull 0 onto the axis.
+/// Found by CodeRabbit on #2277.
+#[test]
+fn blank_stacked_values_dont_pull_zero_onto_the_axis() {
+    for kind in [ChartKind::LineStacked, ChartKind::AreaStacked] {
+        let mut c = chart(kind);
+        c.data_labels = false;
+        c.x_title = None;
+        c.y_title = None;
+        let mut s = general("S", &[95.0, 0.0, 100.0], [10, 20, 30, 255], kind);
+        s.values[1] = None;
+        let d = ChartData { categories: vec!["A".into(), "B".into(), "C".into()], series: vec![s], ..ChartData::default() };
+        let (min, max, _) = drawn_value_axis(&render(&c, &d, 480.0, 288.0, &ApproxMeasure));
+        assert!(min > 0.0 && min <= 95.0 && max >= 100.0, "{kind:?}: axis {min}..{max}");
     }
 }
